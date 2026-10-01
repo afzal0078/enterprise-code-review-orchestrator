@@ -8,7 +8,15 @@ import { logger } from './utils/logger.js';
 import { withRetry, withTimeout, ReviewError, ErrorCodes, formatError } from './utils/error-handler.js';
 import { RateLimiter, globalRateLimiter, RateLimiterConfig } from './utils/rate-limiter.js';
 
+export const AGENT_VERSIONS = {
+  orchestrator: '1.0.0',
+  codeQuality: '1.0.0',
+  testCoverage: '1.0.0',
+  refactoring: '1.0.0'
+} as const;
+
 export interface OrchestratorConfig {
+
   /** Model identifier; defaults to ANTHROPIC_MODEL environment variable */
   model?: string;
   /** Maximum dialogue turns allowed for multi-agent synthesis (default: 80) */
@@ -118,8 +126,10 @@ export class CodeReviewOrchestrator {
       const totalDuration = Date.now() - reviewStartTime;
       const finalReport = parseResult.data;
 
-      // Update timing metadata
+      // Update timing and provenance metadata
       finalReport.metadata.duration = totalDuration;
+      finalReport.metadata.analyzedAt = new Date().toISOString();
+      finalReport.metadata.agentVersions = { ...AGENT_VERSIONS };
 
       logger.info('Multi-agent code review successfully finished', {
         owner,

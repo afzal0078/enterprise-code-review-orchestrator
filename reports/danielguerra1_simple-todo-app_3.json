@@ -255,13 +255,13 @@
     }
   ],
   "metadata": {
-    "analyzedAt": "2026-10-01T10:58:01.615Z",
-    "duration": 5240,
+    "analyzedAt": "2026-10-01T16:53:30.829Z",
+    "duration": 128910,
     "agentVersions": {
-      "orchestrator": "2.0.0",
-      "codeQuality": "1.5.0",
-      "testCoverage": "1.4.0",
-      "refactoring": "1.2.0"
+      "orchestrator": "1.0.0",
+      "codeQuality": "1.0.0",
+      "testCoverage": "1.0.0",
+      "refactoring": "1.0.0"
     }
   }
 }
