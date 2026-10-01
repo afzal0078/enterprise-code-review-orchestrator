@@ -2,19 +2,24 @@ import type { AgentDefinition } from '@anthropic-ai/claude-agent-sdk';
 import { REFACTORING_SUGGESTER_PROMPT } from '../prompts/refactoring-suggester.prompt.js';
 
 /**
- * Identifies refactoring opportunities in ONE changed file at a time --
- * design pattern candidates, modernization, extract-function candidates,
- * and dead code -- returning a single RefactoringSuggestion JSON object
- * for that file.
+ * Specialized Subagent: Refactoring Suggester
+ *
+ * Scans code files for structural degradation, opportunities for modern idioms
+ * (e.g., ES2022+ features), design patterns, dead/unreachable logic, and modularization.
+ * Outputs concrete before-and-after transformation suggestions with justified benefits.
  */
 export const refactoringSuggester: AgentDefinition = {
   description:
-    'Identifies refactoring opportunities in a single changed file -- ' +
-    'design pattern candidates, modernization opportunities, extract-' +
-    'function candidates, and dead code -- returning a ' +
-    'RefactoringSuggestion JSON object for that file. Use this agent ' +
-    'whenever a file needs a structural/code-cleanliness review.',
+    'Dedicated architectural and structural refactoring specialist. Analyzes source files ' +
+    'for anti-patterns, code duplication, dead code, extract-method candidates, and ' +
+    'modernization opportunities. Produces precise before/after refactoring diffs ' +
+    'in a structured RefactoringSuggestion payload.',
   prompt: REFACTORING_SUGGESTER_PROMPT,
   model: 'inherit',
-  tools: ['Read', 'Grep', 'Glob', 'Skill'],
+  tools: [
+    'Read',
+    'Grep',
+    'Glob',
+    'Skill'
+  ]
 };

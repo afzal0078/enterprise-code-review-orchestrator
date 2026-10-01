@@ -2,109 +2,141 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import { mcpServersConfig } from './config/mcp.config.js';
 import { agents } from './agents/index.js';
 import { buildOrchestratorPrompt } from './prompts/index.js';
-import { ReviewReportSchema, ReviewReportJSONSchema } from './types/report-types';
-import { ReviewReport } from './types/report-types';
+import { ReviewReportSchema, ReviewReportJSONSchema } from './types/report-types.js';
+import type { ReviewReport } from './types/report-types.js';
 import { logger } from './utils/logger.js';
 import { withRetry, withTimeout, ReviewError, ErrorCodes, formatError } from './utils/error-handler.js';
 import { RateLimiter, globalRateLimiter, RateLimiterConfig } from './utils/rate-limiter.js';
 
-const ORCHESTRATOR_TIMEOUT_MS = 8 * 60 * 1000; // per-file fan-out needs headroom
-const DEFAULT_MAX_TURNS = 120; // multi-agent, multi-file coordination needs plenty of turns
-const ESTIMATED_TOKENS_PER_REVIEW = 30000; // rough estimate for a multi-file, multi-agent run
-
-/**
- * Orchestrator configuration options
- */
-export interface OrchestratorOptions {
-  /** Rate limiter to use for this orchestrator (defaults to the shared global instance) */
-  rateLimiter?: RateLimiter;
-  /** Convenience: build a dedicated rate limiter from a partial config instead of passing `rateLimiter` */
-  rateLimitConfig?: Partial<RateLimiterConfig>;
-  /** Override the model used (defaults to process.env.ANTHROPIC_MODEL) */
+export interface OrchestratorConfig {
+  /** Model identifier; defaults to ANTHROPIC_MODEL environment variable */
   model?: string;
-  /** Override the max SDK turns allowed for a single review (default: 60) */
+  /** Maximum dialogue turns allowed for multi-agent synthesis (default: 80) */
   maxTurns?: number;
+  /** Custom rate limiter instance or partial config */
+  rateLimiter?: RateLimiter;
+  rateLimitConfig?: Partial<RateLimiterConfig>;
+  /** Timeout limit in milliseconds for complete PR review (default: 10 minutes) */
+  timeoutMs?: number;
+  /** Number of retry attempts on transient network or query errors (default: 2) */
+  maxRetries?: number;
 }
 
+const DEFAULT_SETTINGS = {
+  maxTurns: 80,
+  timeoutMs: 10 * 60 * 1000,
+  maxRetries: 2,
+  estimatedTokens: 25_000
+} as const;
+
 /**
- * Main Code Review Orchestrator
- * Coordinates subagents to analyze pull requests and generate comprehensive reports
+ * Enterprise Multi-Agent Code Review Orchestrator
+ * Coordinates GitHub PR data retrieval, dispatches specialist subagents,
+ * and synthesizes structured multi-perspective review reports.
  */
 export class CodeReviewOrchestrator {
-  private readonly rateLimiter: RateLimiter;
-  private readonly model?: string;
+  private readonly modelName?: string;
   private readonly maxTurns: number;
+  private readonly timeoutMs: number;
+  private readonly maxRetries: number;
+  private readonly rateLimiter: RateLimiter;
 
-  constructor(options: OrchestratorOptions = {}) {
-    this.rateLimiter =
-      options.rateLimiter ?? (options.rateLimitConfig ? new RateLimiter(options.rateLimitConfig) : globalRateLimiter);
-    this.model = options.model;
-    this.maxTurns = options.maxTurns ?? DEFAULT_MAX_TURNS;
+  constructor(config: OrchestratorConfig = {}) {
+    this.modelName = config.model;
+    this.maxTurns = config.maxTurns ?? DEFAULT_SETTINGS.maxTurns;
+    this.timeoutMs = config.timeoutMs ?? DEFAULT_SETTINGS.timeoutMs;
+    this.maxRetries = config.maxRetries ?? DEFAULT_SETTINGS.maxRetries;
+
+    if (config.rateLimiter) {
+      this.rateLimiter = config.rateLimiter;
+    } else if (config.rateLimitConfig) {
+      this.rateLimiter = new RateLimiter(config.rateLimitConfig);
+    } else {
+      this.rateLimiter = globalRateLimiter;
+    }
   }
 
   /**
-   * Review a pull request using parallel subagent analysis
-   * @param owner - Repository owner
-   * @param repo - Repository name
-   * @param prNumber - Pull request number
-   * @returns Complete review report
+   * Performs an end-to-end multi-agent review for a target GitHub pull request.
+   *
+   * @param owner Repository owner or organization
+   * @param repo Repository name
+   * @param prNumber Pull request number
+   * @returns Validated ReviewReport matching domain schema
    */
   async reviewPullRequest(
     owner: string,
     repo: string,
     prNumber: number
   ): Promise<ReviewReport> {
-    const model = this.model ?? process.env.ANTHROPIC_MODEL;
-    if (!model) {
+    const activeModel = this.modelName || process.env.ANTHROPIC_MODEL;
+    if (!activeModel) {
       throw new ReviewError(
-        'ANTHROPIC_MODEL environment variable is required',
+        'Missing required model configuration. Please set ANTHROPIC_MODEL.',
         ErrorCodes.INVALID_CONFIG
       );
     }
 
-    const startedAt = Date.now();
-    logger.info('Starting code review', { owner, repo, prNumber });
+    const reviewStartTime = Date.now();
+    logger.info('Initiating multi-agent code review workflow', {
+      owner,
+      repo,
+      prNumber,
+      model: activeModel,
+      maxTurns: this.maxTurns
+    });
 
-    await this.rateLimiter.acquire(ESTIMATED_TOKENS_PER_REVIEW);
+    // Acquire rate limit slot
+    await this.rateLimiter.acquire(DEFAULT_SETTINGS.estimatedTokens);
+
     try {
-      const structuredOutput = await withRetry(
+      // Execute query with retry and timeout wrappers
+      const rawStructuredOutput = await withRetry(
         () =>
           withTimeout(
-            () => this.runQuery(owner, repo, prNumber, model),
-            ORCHESTRATOR_TIMEOUT_MS,
-            `Review of ${owner}/${repo}#${prNumber} timed out`
+            () => this.dispatchOrchestratorQuery(owner, repo, prNumber, activeModel),
+            this.timeoutMs,
+            `Code review pipeline timed out for ${owner}/${repo}#${prNumber} after ${this.timeoutMs}ms`
           ),
-        1,
-        1000
+        this.maxRetries,
+        1500
       );
 
-      const parsed = ReviewReportSchema.safeParse(structuredOutput);
-      if (!parsed.success) {
+      // Validate output against Zod schema
+      const parseResult = ReviewReportSchema.safeParse(rawStructuredOutput);
+      if (!parseResult.success) {
+        logger.error('Orchestrator structured output failed schema validation', {
+          issues: parseResult.error.issues
+        });
         throw new ReviewError(
-          `Orchestrator output failed schema validation: ${parsed.error.message}`,
+          `Review report validation error: ${parseResult.error.message}`,
           ErrorCodes.STRUCTURED_OUTPUT_FAILED,
-          { issues: parsed.error.issues }
+          { validationIssues: parseResult.error.issues }
         );
       }
 
-      const duration = Date.now() - startedAt;
-      logger.info('Code review completed', {
+      const totalDuration = Date.now() - reviewStartTime;
+      const finalReport = parseResult.data;
+
+      // Update timing metadata
+      finalReport.metadata.duration = totalDuration;
+
+      logger.info('Multi-agent code review successfully finished', {
         owner,
         repo,
         prNumber,
-        score: parsed.data.summary.overallScore,
-        duration,
-        status: 'success',
+        overallScore: finalReport.summary.overallScore,
+        filesAnalyzed: finalReport.summary.totalFiles,
+        durationMs: totalDuration
       });
 
-      return parsed.data;
+      return finalReport;
     } catch (error) {
-      logger.error('Code review failed', {
+      logger.error('Multi-agent review workflow encountered an unrecoverable failure', {
         owner,
         repo,
         prNumber,
-        error: formatError(error),
-        status: 'failed',
+        error: formatError(error)
       });
       throw error;
     } finally {
@@ -112,19 +144,22 @@ export class CodeReviewOrchestrator {
     }
   }
 
-  private async runQuery(
+  /**
+   * Internal query invocation leveraging Claude Agent SDK's query function.
+   */
+  private async dispatchOrchestratorQuery(
     owner: string,
     repo: string,
     prNumber: number,
     model: string
   ): Promise<unknown> {
-    const prompt = buildOrchestratorPrompt(owner, repo, prNumber);
+    const orchestratorPrompt = buildOrchestratorPrompt(owner, repo, prNumber);
 
-    const result = query({
-      prompt,
+    const queryStream = query({
+      prompt: orchestratorPrompt,
       options: {
         model,
-        maxTurns: 150,
+        maxTurns: this.maxTurns,
         permissionMode: 'default',
         mcpServers: mcpServersConfig,
         agents,
@@ -137,42 +172,45 @@ export class CodeReviewOrchestrator {
           'mcp__github__get_pull_request',
           'mcp__github__get_pull_request_files',
           'mcp__github__get_file_contents',
-          'mcp__eslint__lint-files',
+          'mcp__eslint__lint-files'
         ],
         outputFormat: {
           type: 'json_schema',
-          schema: ReviewReportJSONSchema,
-        },
-      },
+          schema: ReviewReportJSONSchema
+        }
+      }
     });
 
-    let structuredOutput: unknown = null;
-    let failureSubtype: string | null = null;
+    let payload: unknown = null;
+    let terminationSubtype: string | undefined;
 
-    for await (const message of result) {
-      if (message.type === 'result') {
-        if (message.subtype === 'success' && message.structured_output) {
-          structuredOutput = message.structured_output;
-        } else if (message.subtype !== 'success') {
-          failureSubtype = message.subtype;
+    for await (const event of queryStream) {
+      if (event.type === 'result') {
+        if (event.subtype === 'success' && event.structured_output) {
+          payload = event.structured_output;
+        } else if (event.subtype !== 'success') {
+          terminationSubtype = event.subtype;
         }
       }
 
-      if (message.type === 'assistant') {
-        logger.debug('Orchestrator turn', { content: message.message?.content });
+      if (event.type === 'assistant') {
+        logger.debug('Orchestrator iteration message', { content: event.message?.content });
       }
     }
 
-    if (!structuredOutput) {
-      throw new ReviewError(
-        failureSubtype
-          ? `Orchestrator run ended with SDK failure subtype "${failureSubtype}"`
-          : 'Orchestrator did not produce a structured_output payload',
-        ErrorCodes.AGENT_FAILED,
-        { owner, repo, prNumber, failureSubtype }
-      );
+    if (!payload) {
+      const reason = terminationSubtype
+        ? `Agent run completed with failure subtype: ${terminationSubtype}`
+        : 'Query completed without emitting structured_output';
+
+      throw new ReviewError(reason, ErrorCodes.AGENT_FAILED, {
+        owner,
+        repo,
+        prNumber,
+        terminationSubtype
+      });
     }
 
-    return structuredOutput;
+    return payload;
   }
 }

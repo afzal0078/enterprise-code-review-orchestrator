@@ -1,29 +1,28 @@
-import { McpServerConfig } from '../types/index.js';
+import type { McpServerConfig } from '../types/index.js';
 
 /**
- * MCP Server configurations for the multi-agent code review system.
- * Connects the Orchestrator and Subagents to external toolsets.
+ * Model Context Protocol (MCP) Server Configurations
+ * Integrates external capabilities: GitHub API integration and ESLint static analysis.
  */
 export const mcpServersConfig: Record<string, McpServerConfig> = {
   /**
-   * GitHub MCP Server
-   * Facilitates PR metadata retrieval and source file inspections.
+   * GitHub MCP Server: Pull request metadata, file tree inspection, and diffs.
    */
   github: {
-    type: 'stdio' as const,
+    type: 'stdio',
     command: 'npx',
     args: ['-y', '@modelcontextprotocol/server-github'],
     env: {
-      GITHUB_PERSONAL_ACCESS_TOKEN: process.env.GITHUB_TOKEN || process.env.GITHUB_PERSONAL_ACCESS_TOKEN || ''
+      GITHUB_PERSONAL_ACCESS_TOKEN:
+        process.env.GITHUB_TOKEN || process.env.GITHUB_PERSONAL_ACCESS_TOKEN || ''
     }
   },
 
   /**
-   * ESLint MCP Server
-   * Performs static analysis and code quality checks.
+   * ESLint MCP Server: Static code analysis, linting issues, and style diagnostics.
    */
   eslint: {
-    type: 'stdio' as const,
+    type: 'stdio',
     command: 'npx',
     args: ['-y', '@eslint/mcp@latest'],
     env: {}

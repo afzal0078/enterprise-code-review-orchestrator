@@ -1,0 +1,183 @@
+{
+  "pullRequest": {
+    "owner": "airaamane",
+    "repo": "simple-todo-app",
+    "number": 2
+  },
+  "fileReviews": [
+    {
+      "file": "src/search.js",
+      "codeQuality": {
+        "file": "src/search.js",
+        "issues": [
+          {
+            "line": 78,
+            "severity": "critical",
+            "category": "security",
+            "description": "Cross-Site Scripting (XSS) vulnerability in highlight() - unescaped HTML injection",
+            "suggestion": "Escape special HTML characters in title and query terms before wrapping with <mark> tags"
+          },
+          {
+            "line": 78,
+            "severity": "high",
+            "category": "bug-risk",
+            "description": "String.prototype.replace() replaces only the first occurrence of query term",
+            "suggestion": "Use replaceAll() or a globally flagged regular expression with escaping"
+          },
+          {
+            "line": 12,
+            "severity": "high",
+            "category": "bug-risk",
+            "description": "Empty or multiple spaces in query produces empty search term matching all todos",
+            "suggestion": "Filter out empty query terms: query.toLowerCase().split(/\\s+/).filter(Boolean)"
+          },
+          {
+            "line": 22,
+            "severity": "medium",
+            "category": "performance",
+            "description": "STOP_WORDS.indexOf() performed repeatedly inside nested loops: O(n * m) complexity",
+            "suggestion": "Convert STOP_WORDS to a Set for O(1) membership checks"
+          },
+          {
+            "line": 8,
+            "severity": "medium",
+            "category": "style",
+            "description": "Legacy var declarations and loose equality operators (!=, ==) throughout file",
+            "suggestion": "Replace var with const/let and use strict equality (===, !==)"
+          }
+        ],
+        "overallScore": 58,
+        "summary": "Multiple high-severity concerns: XSS vulnerability in highlight(), query term parsing bugs, and quadratic search loops."
+      },
+      "testCoverage": {
+        "file": "src/search.js",
+        "hasTests": false,
+        "testFiles": [],
+        "untestedPaths": [
+          {
+            "type": "function",
+            "location": "searchTodos(query, options)",
+            "priority": "critical",
+            "reasoning": "Primary search entry point is completely untested, risking regressions and faulty filtering",
+            "suggestedTest": "test('searchTodos filters todos by term and options.done', () => {\n  const results = searchTodos('groceries', { done: false });\n  assert.ok(Array.isArray(results));\n  assert.ok(results.every(t => !t.done));\n});"
+          },
+          {
+            "type": "function",
+            "location": "rankResults(query, results)",
+            "priority": "high",
+            "reasoning": "Ranking calculation and sort logic must be validated against tie-breaking and zero matches",
+            "suggestedTest": "test('rankResults sorts todos by matching term frequency', () => {\n  const items = [{ title: 'milk' }, { title: 'buy milk chocolate' }];\n  const ranked = rankResults('buy milk', items);\n  assert.equal(ranked[0].title, 'buy milk chocolate');\n});"
+          },
+          {
+            "type": "function",
+            "location": "highlight(title, query)",
+            "priority": "critical",
+            "reasoning": "Ensure HTML output correctly wraps matched terms and handles HTML entity escaping",
+            "suggestedTest": "test('highlight escapes HTML entities and marks matched terms', () => {\n  const result = highlight('<script>alert(1)</script> buy milk', 'milk');\n  assert.ok(!result.includes('<script>'));\n  assert.ok(result.includes('<mark>milk</mark>'));\n});"
+          },
+          {
+            "type": "function",
+            "location": "searchAndRank(query, options)",
+            "priority": "high",
+            "reasoning": "End-to-end integration function combining search and rank pipeline",
+            "suggestedTest": "test('searchAndRank returns ranked search matches', () => {\n  const res = searchAndRank('test');\n  assert.ok(Array.isArray(res));\n});"
+          }
+        ],
+        "coverageEstimate": 0,
+        "summary": "Zero test coverage for new search module. Critical requirement to introduce unit test suite."
+      },
+      "refactorings": {
+        "file": "src/search.js",
+        "suggestions": [
+          {
+            "type": "modernize",
+            "location": "searchTodos (lines 8-46)",
+            "impact": "high",
+            "description": "Refactor manual imperative loops to declarative Array.prototype.filter pipeline",
+            "before": "var results = [];\nfor (var i = 0; i < all.length; i++) {\n  var todo = all[i];\n  ...\n  results.push(todo);\n}",
+            "after": "const stopSet = new Set(STOP_WORDS);\nconst terms = query.toLowerCase().split(/\\s+/).filter(t => t && !stopSet.has(t));\nconst results = listTodos().filter(todo => {\n  const title = todo.title.toLowerCase();\n  const matches = terms.some(term => title.includes(term));\n  const matchesDone = options?.done === undefined || todo.done === options.done;\n  return matches && matchesDone;\n});",
+            "benefits": "Eliminates 3 nested loops, avoids array mutations, handles whitespace bugs, and uses strict types"
+          },
+          {
+            "type": "pattern-improvement",
+            "location": "STOP_WORDS definition",
+            "impact": "medium",
+            "description": "Convert STOP_WORDS from Array to Set to achieve O(1) membership lookups",
+            "before": "var STOP_WORDS = ['the', 'a', 'an', 'and', 'or', 'to'];",
+            "after": "const STOP_WORDS = new Set(['the', 'a', 'an', 'and', 'or', 'to']);",
+            "benefits": "Improves algorithmic time complexity from O(n) to O(1) per token lookup"
+          },
+          {
+            "type": "simplify",
+            "location": "highlight (lines 75-82)",
+            "impact": "high",
+            "description": "Use regular expressions with word boundary or safe replacer and sanitize HTML input",
+            "before": "for (var i = 0; i < terms.length; i++) {\n  html = html.replace(terms[i], '<mark>' + terms[i] + '</mark>');\n}",
+            "after": "const escapedTerms = terms.filter(Boolean).map(t => t.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&'));\nif (escapedTerms.length === 0) return escapeHtml(title);\nconst regex = new RegExp(`(${escapedTerms.join('|')})`, 'gi');\nreturn escapeHtml(title).replace(regex, '<mark>$1</mark>');",
+            "benefits": "Resolves XSS security vulnerability, replaces all occurrences globally, and preserves case"
+          }
+        ],
+        "summary": "Comprehensive modernization recommended: convert to ES2022 functional constructs and Set lookups."
+      }
+    }
+  ],
+  "summary": {
+    "totalFiles": 1,
+    "overallScore": 58,
+    "criticalIssues": 1,
+    "highPriorityTests": 4,
+    "refactoringOpportunities": 3
+  },
+  "recommendations": [
+    {
+      "priority": "critical",
+      "category": "Security",
+      "description": "Remediate XSS vulnerability in highlight() by escaping HTML characters before injecting <mark> elements",
+      "files": [
+        "src/search.js"
+      ]
+    },
+    {
+      "priority": "critical",
+      "category": "Testing",
+      "description": "Author comprehensive unit tests in src/search.test.js covering searchTodos, rankResults, and highlight",
+      "files": [
+        "src/search.js"
+      ]
+    },
+    {
+      "priority": "high",
+      "category": "Bug Risk",
+      "description": "Fix query tokenization by filtering empty strings from whitespace-separated tokens",
+      "files": [
+        "src/search.js"
+      ]
+    },
+    {
+      "priority": "medium",
+      "category": "Performance",
+      "description": "Migrate STOP_WORDS from an Array to a Set to reduce nested lookup complexity",
+      "files": [
+        "src/search.js"
+      ]
+    },
+    {
+      "priority": "medium",
+      "category": "Code Quality",
+      "description": "Modernize syntax from legacy var to const/let and replace imperative loops with Array.prototype.filter",
+      "files": [
+        "src/search.js"
+      ]
+    }
+  ],
+  "metadata": {
+    "analyzedAt": "2026-10-01T10:58:01.615Z",
+    "duration": 4150,
+    "agentVersions": {
+      "orchestrator": "2.0.0",
+      "codeQuality": "1.5.0",
+      "testCoverage": "1.4.0",
+      "refactoring": "1.2.0"
+    }
+  }
+}

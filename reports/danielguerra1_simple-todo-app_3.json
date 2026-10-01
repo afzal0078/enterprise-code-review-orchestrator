@@ -1,0 +1,267 @@
+{
+  "pullRequest": {
+    "owner": "danielguerra1",
+    "repo": "simple-todo-app",
+    "number": 3
+  },
+  "fileReviews": [
+    {
+      "file": "src/subscription.js",
+      "codeQuality": {
+        "file": "src/subscription.js",
+        "issues": [
+          {
+            "line": 18,
+            "severity": "critical",
+            "category": "security",
+            "description": "SQL Injection in getSubscription() via raw string concatenation with userId",
+            "suggestion": "Use parameterized queries: await db.query(\"SELECT * FROM subscriptions WHERE user_id = $1\", [userId])"
+          },
+          {
+            "line": 27,
+            "severity": "critical",
+            "category": "security",
+            "description": "SQL Injection in searchSubscriptions() via unescaped filters and orderBy clause",
+            "suggestion": "Whitelist allowed order columns and parameterize filter clauses"
+          },
+          {
+            "line": 87,
+            "severity": "critical",
+            "category": "security",
+            "description": "Remote Code Execution / Arbitrary Execution risk via eval(amountStr) in chargeCard()",
+            "suggestion": "Replace eval() with strict numeric parsing: Number(amountStr) or parseFloat(amountStr)"
+          },
+          {
+            "line": 50,
+            "severity": "critical",
+            "category": "security",
+            "description": "Sensitive Data Exposure: Plaintext credit card numbers, CVVs, and passwords logged to stdout",
+            "suggestion": "Completely remove credit card, CVV, and raw password logging to prevent PCI-DSS violation"
+          },
+          {
+            "line": 47,
+            "severity": "critical",
+            "category": "security",
+            "description": "Insecure Cryptography: MD5 used for password hashing",
+            "suggestion": "Use modern salted adaptive hashing algorithms such as bcrypt or Argon2"
+          },
+          {
+            "line": 6,
+            "severity": "critical",
+            "category": "security",
+            "description": "Hardcoded payment secrets and administrative tokens in source repository",
+            "suggestion": "Move PAYMENT_API_SECRET and ADMIN_OVERRIDE_TOKEN to environment variables"
+          },
+          {
+            "line": 79,
+            "severity": "high",
+            "category": "security",
+            "description": "Broken Access Control in isAdmin(): Client can forge req.body.isAdmin to gain full admin privileges",
+            "suggestion": "Verify admin rights strictly server-side using cryptographically signed session tokens"
+          },
+          {
+            "line": 46,
+            "severity": "medium",
+            "category": "security",
+            "description": "Insecure randomness: Math.random() used to generate authentication / subscription tokens",
+            "suggestion": "Use crypto.randomUUID() or crypto.randomBytes(32) for secure token generation"
+          }
+        ],
+        "overallScore": 32,
+        "summary": "CRITICAL SECURITY ALERT: Multiple high-severity vulnerabilities including SQL Injection, eval() execution, hardcoded keys, MD5 hashing, plaintext credential logging, and broken authentication."
+      },
+      "testCoverage": {
+        "file": "src/subscription.js",
+        "hasTests": false,
+        "testFiles": [],
+        "untestedPaths": [
+          {
+            "type": "function",
+            "location": "getSubscription(userId)",
+            "priority": "critical",
+            "reasoning": "Critical customer subscription status resolver lacks test verification",
+            "suggestedTest": "test('getSubscription retrieves record by userId', async () => {\n  const sub = await getSubscription('user-123');\n  assert.equal(sub.plan, 'premium');\n});"
+          },
+          {
+            "type": "function",
+            "location": "createSubscription(req)",
+            "priority": "critical",
+            "reasoning": "User billing onboarding and database insertion has zero unit or integration tests",
+            "suggestedTest": "test('createSubscription inserts record and returns token', async () => {\n  const res = await createSubscription({ body: { userId: 'u1', plan: 'premium', role: 'user' } });\n  assert.ok(res.token);\n});"
+          },
+          {
+            "type": "function",
+            "location": "isAdmin(req)",
+            "priority": "critical",
+            "reasoning": "Access control gate must be verified against unauthorized spoofing and header inspection",
+            "suggestedTest": "test('isAdmin rejects request with body.isAdmin spoofing', () => {\n  assert.equal(isAdmin({ headers: {}, body: { isAdmin: true } }), false);\n});"
+          },
+          {
+            "type": "function",
+            "location": "chargeCard(cardNumber, amountStr)",
+            "priority": "critical",
+            "reasoning": "Financial payment processing must be unit tested with mock HTTP provider",
+            "suggestedTest": "test('chargeCard posts charge to provider without eval', async () => {\n  const res = await chargeCard('4111111111111111', '19.99');\n  assert.ok(res);\n});"
+          },
+          {
+            "type": "function",
+            "location": "canAddTodo(userId, currentCount)",
+            "priority": "high",
+            "reasoning": "Enforces plan quotas between free and premium accounts",
+            "suggestedTest": "test('canAddTodo enforces quota for free tier', async () => {\n  assert.equal(await canAddTodo('free-user', 25), false);\n});"
+          }
+        ],
+        "coverageEstimate": 0,
+        "summary": "Zero test coverage for mission-critical subscription and billing subsystems."
+      },
+      "refactorings": {
+        "file": "src/subscription.js",
+        "suggestions": [
+          {
+            "type": "pattern-improvement",
+            "location": "Database interactions across all queries",
+            "impact": "high",
+            "description": "Refactor string query assembly into parameterized database client or repository layer",
+            "before": "const rows = await db.query(\"SELECT * FROM subscriptions WHERE user_id = '\" + userId + \"'\");",
+            "after": "const rows = await db.query(\"SELECT * FROM subscriptions WHERE user_id = $1\", [userId]);",
+            "benefits": "Eliminates SQL injection vulnerabilities and permits query plan caching in database driver"
+          },
+          {
+            "type": "modernize",
+            "location": "chargeCard (lines 86-97)",
+            "impact": "high",
+            "description": "Replace eval() with safe numeric coercion and validate payment payload",
+            "before": "const amount = eval(amountStr);",
+            "after": "const amount = Number(amountStr);\nif (Number.isNaN(amount) || amount <= 0) throw new Error(\"Invalid payment amount\");",
+            "benefits": "Completely eliminates Arbitrary Code Execution vulnerability"
+          },
+          {
+            "type": "simplify",
+            "location": "createSubscription token & credential handling",
+            "impact": "high",
+            "description": "Use crypto.randomUUID() for tokens and Argon2/bcrypt for password hashing",
+            "before": "const token = 'sub_' + Math.random().toString(36).substring(2);\nconst passwordHash = crypto.createHash('md5').update(req.body.password).digest('hex');",
+            "after": "const token = `sub_${crypto.randomUUID()}`;\nconst passwordHash = await hashPassword(req.body.password);",
+            "benefits": "Replaces cryptographically broken MD5 and predictable random tokens with secure primitives"
+          }
+        ],
+        "summary": "Fundamental security and architectural overhaul required to eliminate critical vulnerabilities."
+      }
+    },
+    {
+      "file": "src/db.js",
+      "codeQuality": {
+        "file": "src/db.js",
+        "issues": [
+          {
+            "line": 5,
+            "severity": "low",
+            "category": "best-practice",
+            "description": "Console logging raw SQL queries in production driver",
+            "suggestion": "Use a structured debug logger instead of console.log"
+          }
+        ],
+        "overallScore": 88,
+        "summary": "Minimal database shim; requires connection pooling and parameterization support."
+      },
+      "testCoverage": {
+        "file": "src/db.js",
+        "hasTests": false,
+        "testFiles": [],
+        "untestedPaths": [
+          {
+            "type": "function",
+            "location": "createConnection()",
+            "priority": "medium",
+            "reasoning": "Verify connection initialization and query dispatch",
+            "suggestedTest": "test('createConnection executes query handler', async () => {\n  const db = await createConnection();\n  assert.deepEqual(await db.query('SELECT 1'), []);\n});"
+          }
+        ],
+        "coverageEstimate": 0,
+        "summary": "Shim lacks test suite."
+      },
+      "refactorings": {
+        "file": "src/db.js",
+        "suggestions": [
+          {
+            "type": "pattern-improvement",
+            "location": "createConnection implementation",
+            "impact": "medium",
+            "description": "Support parameterized queries by accepting values array: query(sql, params)",
+            "before": "async query(sql) { console.log('[sql]', sql); return []; }",
+            "after": "async query(sql, params = []) { logger.debug('SQL query', { sql, params }); return []; }",
+            "benefits": "Enables safe parameterized query execution across all consumers"
+          }
+        ],
+        "summary": "Extend shim to support parameterized queries."
+      }
+    }
+  ],
+  "summary": {
+    "totalFiles": 2,
+    "overallScore": 45,
+    "criticalIssues": 6,
+    "highPriorityTests": 5,
+    "refactoringOpportunities": 4
+  },
+  "recommendations": [
+    {
+      "priority": "critical",
+      "category": "Security",
+      "description": "BLOCK MERGE: Remediate severe SQL Injection flaws across getSubscription, searchSubscriptions, and createSubscription using parameterized queries",
+      "files": [
+        "src/subscription.js"
+      ]
+    },
+    {
+      "priority": "critical",
+      "category": "Security",
+      "description": "Remove eval() from chargeCard() and replace with strict numeric validation to prevent Remote Code Execution",
+      "files": [
+        "src/subscription.js"
+      ]
+    },
+    {
+      "priority": "critical",
+      "category": "Security & Compliance",
+      "description": "Cease logging plaintext credit card numbers, CVVs, and passwords immediately (PCI-DSS violation)",
+      "files": [
+        "src/subscription.js"
+      ]
+    },
+    {
+      "priority": "critical",
+      "category": "Security",
+      "description": "Extract PAYMENT_API_SECRET and ADMIN_OVERRIDE_TOKEN to environment variables",
+      "files": [
+        "src/subscription.js"
+      ]
+    },
+    {
+      "priority": "high",
+      "category": "Authentication",
+      "description": "Fix broken access control in isAdmin(): do not trust unverified client req.body.isAdmin payload",
+      "files": [
+        "src/subscription.js"
+      ]
+    },
+    {
+      "priority": "high",
+      "category": "Testing",
+      "description": "Author unit and integration tests for billing, payment processing, and access control",
+      "files": [
+        "src/subscription.js"
+      ]
+    }
+  ],
+  "metadata": {
+    "analyzedAt": "2026-10-01T10:58:01.615Z",
+    "duration": 5240,
+    "agentVersions": {
+      "orchestrator": "2.0.0",
+      "codeQuality": "1.5.0",
+      "testCoverage": "1.4.0",
+      "refactoring": "1.2.0"
+    }
+  }
+}
